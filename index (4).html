@@ -1,0 +1,799 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GoldLike Social</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios@1.4.0/dist/axios.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-router-dom@6.4.0/dist/umd/react-router-dom.production.min.js"></script>
+  <style>
+    .animate-slide-in { animation: slideIn 0.5s ease-in; }
+    @keyframes slideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    const { useState, useEffect, useRef, Component } = React;
+    const { HashRouter, Routes, Route, useParams } = ReactRouterDOM; // Changed to HashRouter for GitHub Pages
+
+    const API_URL = 'https://your-production-backend-url.com'; // Replace with your actual backend URL (e.g., hosted on Heroku/Render)
+
+    // Mock API responses for demo/testing (remove or replace with real backend in production)
+    const mockAxios = {
+      get: (url, config) => {
+        console.log('Mock GET:', url);
+        if (url.includes('/api/users/me')) {
+          return Promise.resolve({ data: { _id: '1', email: 'test@example.com', bio: 'Test bio', avatar: '', paymentAccounts: { paypal: null, stripe: null, venmo: null } } });
+        } else if (url.includes('/api/posts')) {
+          return Promise.resolve({ data: [{ _id: '1', content: 'Test post', likes: 0, comments: [], userId: '1', username: 'TestUser' }] });
+        } else if (url.includes('/api/stories')) {
+          return Promise.resolve({ data: [] });
+        } else if (url.includes('/api/notifications')) {
+          return Promise.resolve({ data: [{ _id: '1', message: 'Test notification' }] });
+        } else if (url.includes('/api/messages')) {
+          return Promise.resolve({ data: {} });
+        } else if (url.includes('/api/users/followers')) {
+          return Promise.resolve({ data: [] });
+        } else if (url.includes('/api/users/following')) {
+          return Promise.resolve({ data: [] });
+        } else if (url.includes('/api/posts/drafts')) {
+          return Promise.resolve({ data: [] });
+        } else if (url.includes('/api/users/')) {
+          return Promise.resolve({ data: { _id: '2', username: 'OtherUser', bio: '', avatar: '' } } });
+        }
+        return Promise.reject(new Error('Not implemented'));
+      },
+      post: (url, data, config) => {
+        console.log('Mock POST:', url, data);
+        if (url.includes('/api/users/login') || url.includes('/api/users/signup')) {
+          return Promise.resolve({ data: { token: 'mock-token', user: { _id: '1', email: data.email, bio: '', avatar: '' } } });
+        } else if (url.includes('/api/posts')) {
+          return Promise.resolve({ data: { _id: '2', content: data.content, likes: 0, comments: [] } });
+        } else if (url.includes('/api/stories')) {
+          return Promise.resolve({ data: { id: '1', content: data.content } });
+        } else if (url.includes('/api/messages')) {
+          return Promise.resolve({ data: {} });
+        } else if (url.includes('/like')) {
+          return Promise.resolve({ data: { winner: false } });
+        } else if (url.includes('/comment')) {
+          return Promise.resolve({ data: {} });
+        }
+        return Promise.reject(new Error('Not implemented'));
+      },
+      put: (url, data, config) => {
+        console.log('Mock PUT:', url);
+        return Promise.resolve({ data: { avatar: 'mock-avatar.jpg' } });
+      },
+      delete: (url, config) => {
+        console.log('Mock DELETE:', url);
+        return Promise.resolve({ data: {} });
+      }
+    };
+
+    class ErrorBoundary extends Component {
+      state = { error: null };
+      static getDerivedStateFromError(error) {
+        console.error('ErrorBoundary caught:', error);
+        return { error };
+      }
+      render() {
+        if (this.state.error) {
+          return React.createElement('div', { className: 'p-4 bg-red-100 text-red-700 rounded', role: 'alert' },
+            React.createElement('h2', null, 'Error: Something went wrong.'),
+            React.createElement('p', null, this.state.error.message),
+            React.createElement('button', {
+              onClick: () => window.location.reload(),
+              className: 'mt-2 bg-blue-500 text-white p-2 rounded hover:bg-blue-600',
+              'aria-label': 'Reload page',
+              tabIndex: 0
+            }, 'Reload')
+          );
+        }
+        return this.props.children;
+      }
+    }
+
+    const WinnerOverlay = ({ prize, onClose }) => {
+      useEffect(() => {
+        const duration = 5 * 1000;
+        const end = Date.now() + duration;
+        const colors = ['#ff0', '#f00', '#0f0', '#00f', '#ff69b4'];
+        const frame = () => {
+          if (Date.now() > end) return;
+          confetti({
+            particleCount: 100,
+            angle: 60,
+            spread: 55,
+            origin: { x: 0 },
+            colors: colors
+          });
+          confetti({
+            particleCount: 100,
+            angle: 120,
+            spread: 55,
+            origin: { x: 1 },
+            colors: colors
+          });
+          requestAnimationFrame(frame);
+        };
+        frame();
+      }, []);
+      return React.createElement('div', { className: 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50' },
+        React.createElement('div', { className: 'bg-white p-6 rounded-lg shadow-lg text-center' },
+          React.createElement('h2', { className: 'text-3xl font-bold text-yellow-500 mb-4' }, '🎉 Golden Like Winner! 🎉'),
+          React.createElement('p', { className: 'text-xl mb-4' }, 'You won: ', prize),
+          React.createElement('button', {
+            onClick: onClose,
+            className: 'bg-blue-500 text-white p-2 rounded hover:bg-blue-600',
+            'aria-label': 'Close winner overlay',
+            tabIndex: 0
+          }, 'Close')
+        )
+      );
+    };
+
+    const Notifications = ({ notifications, onDismiss, onClearAll }) => {
+      return React.createElement('div', { className: 'fixed top-4 right-4 w-80 max-h-[80vh] overflow-y-auto bg-gray-100 rounded-lg shadow-lg z-50 p-4' },
+        React.createElement('div', { className: 'flex justify-between items-center mb-2' },
+          React.createElement('h3', { className: 'text-lg font-semibold' }, 'Notifications'),
+          React.createElement('button', {
+            onClick: () => window.confirm('Clear all notifications?') && onClearAll(),
+            className: 'text-red-500 hover:underline',
+            'aria-label': 'Clear all notifications',
+            tabIndex: 0
+          }, 'Clear All')
+        ),
+        notifications.length === 0 ? React.createElement('p', { className: 'text-sm text-gray-500' }, 'No notifications') : 
+        notifications.map(notification => React.createElement('div', {
+          key: notification._id,
+          className: 'p-2 mb-2 bg-white rounded shadow flex justify-between items-center animate-slide-in',
+          role: 'alert'
+        },
+          React.createElement('p', { className: 'text-sm' }, notification.message),
+          React.createElement('button', {
+            onClick: () => onDismiss(notification._id),
+            className: 'text-red-500 hover:text-red-700',
+            'aria-label': `Dismiss notification ${notification.message}`,
+            tabIndex: 0
+          }, '✕')
+        ))
+      );
+    };
+
+    const ResetPasswordRequest = ({ onBackToLogin }) => {
+      const [email, setEmail] = useState('');
+      const [message, setMessage] = useState('');
+      const [loading, setLoading] = useState(false);
+      const handleResetRequest = () => {
+        if (!email.match(/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/)) {
+          setMessage('Please enter a valid email');
+          return;
+        }
+        setLoading(true);
+        mockAxios.post(`${API_URL}/api/users/forgot-password`, { email })
+          .then(res => setMessage('Password reset link sent to your email'))
+          .catch(err => setMessage('Error: ' + (err.message || 'Failed to send reset link')))
+          .finally(() => setLoading(false));
+      };
+      return React.createElement('div', { className: 'max-w-md mx-auto p-4' },
+        React.createElement('h1', { className: 'text-2xl font-bold mb-4' }, 'Reset Password'),
+        React.createElement('div', { className: 'p-4 bg-gray-100 rounded shadow' },
+          React.createElement('input', {
+            type: 'email',
+            placeholder: 'Enter your email',
+            value: email,
+            onChange: (e) => setEmail(e.target.value),
+            className: 'w-full p-2 mb-2 border rounded',
+            'aria-label': 'Email for password reset',
+            tabIndex: 0
+          }),
+          React.createElement('button', {
+            onClick: handleResetRequest,
+            className: 'bg-blue-500 text-white p-2 rounded hover:bg-blue-600 w-full disabled:bg-gray-400',
+            disabled: loading,
+            'aria-label': 'Send reset link',
+            tabIndex: 0
+          }, loading ? 'Sending...' : 'Send Reset Link'),
+          message && React.createElement('p', { className: 'mt-2 text-sm text-red-500' }, message),
+          React.createElement('button', {
+            onClick: onBackToLogin,
+            className: 'mt-2 text-blue-500 hover:underline',
+            'aria-label': 'Back to login',
+            tabIndex: 0
+          }, 'Back to Login')
+        )
+      );
+    };
+
+    const ResetPassword = () => {
+      const { token } = useParams();
+      const [newPassword, setNewPassword] = useState('');
+      const [message, setMessage] = useState('');
+      const [loading, setLoading] = useState(false);
+      const handleResetPassword = () => {
+        if (!newPassword.match(/^(?=.*[0-9])(?=.*[!@#$%^&*])[a-zA-Z0-9!@#$%^&*]{8,}$/)) {
+          setMessage('Password must be at least 8 characters with a number and special character');
+          return;
+        }
+        setLoading(true);
+        mockAxios.post(`${API_URL}/api/users/reset-password/${token}`, { password: newPassword })
+          .then(res => setMessage('Password reset successfully. Please log in.'))
+          .catch(err => setMessage('Error: ' + (err.message || 'Failed to reset password')))
+          .finally(() => setLoading(false));
+      };
+      return React.createElement('div', { className: 'max-w-md mx-auto p-4' },
+        React.createElement('h1', { className: 'text-2xl font-bold mb-4' }, 'Set New Password'),
+        React.createElement('div', { className: 'p-4 bg-gray-100 rounded shadow' },
+          React.createElement('input', {
+            type: 'password',
+            placeholder: 'New Password',
+            value: newPassword,
+            onChange: (e) => setNewPassword(e.target.value),
+            className: 'w-full p-2 mb-2 border rounded',
+            'aria-label': 'New password',
+            tabIndex: 0
+          }),
+          React.createElement('button', {
+            onClick: handleResetPassword,
+            className: 'bg-blue-500 text-white p-2 rounded hover:bg-blue-600 w-full disabled:bg-gray-400',
+            disabled: loading,
+            'aria-label': 'Reset password',
+            tabIndex: 0
+          }, loading ? 'Resetting...' : 'Reset Password'),
+          message && React.createElement('p', { className: 'mt-2 text-sm text-red-500' }, message),
+          React.createElement('a', {
+            href: '/',
+            className: 'mt-2 text-blue-500 hover:underline block',
+            'aria-label': 'Back to login',
+            tabIndex: 0
+          }, 'Back to Login')
+        )
+      );
+    };
+
+    const App = () => {
+      const [user, setUser] = useState(null);
+      const [posts, setPosts] = useState([]);
+      const [page, setPage] = useState(1);
+      const [hasMorePosts, setHasMorePosts] = useState(true);
+      const [newPost, setNewPost] = useState({ content: '', image: null, video: null, prize: '', likeNumber: '', isReel: false, hashtags: '' });
+      const [previewMedia, setPreviewMedia] = useState(null);
+      const [profile, setProfile] = useState({ bio: '', avatar: '' });
+      const [avatarFile, setAvatarFile] = useState(null);
+      const [profileMessage, setProfileMessage] = useState('');
+      const [notifications, setNotifications] = useState([]);
+      const [showResetRequest, setShowResetRequest] = useState(false);
+      const [auth, setAuth] = useState({ email: '', password: '', isLogin: true });
+      const [newComment, setNewComment] = useState({});
+      const [cameraStream, setCameraStream] = useState(null);
+      const [isCameraOpen, setIsCameraOpen] = useState(false);
+      const [isRecordingVideo, setIsRecordingVideo] = useState(false);
+      const [cameraError, setCameraError] = useState('');
+      const [cameraFacingMode, setCameraFacingMode] = useState('user');
+      const [loading, setLoading] = useState({
+        auth: false,
+        post: false,
+        profile: false,
+        like: {},
+        comment: {},
+        delete: {}
+      });
+      const [winnerPrize, setWinnerPrize] = useState(null); // Added state for winner prize
+      const videoRef = useRef(null);
+      const videoRecorderRef = useRef(null); // Added ref for MediaRecorder
+
+      const axiosInstance = mockAxios; // Rename to avoid conflict with imported axios
+
+      useEffect(() => {
+        try {
+          const token = localStorage.getItem('token');
+          if (token) {
+            setLoading(prev => ({ ...prev, auth: true }));
+            axiosInstance.get(`${API_URL}/api/users/me`, { headers: { Authorization: `Bearer ${token}` } })
+              .then(res => {
+                setUser(res.data);
+                setProfile({ bio: res.data.bio || '', avatar: res.data.avatar || '' });
+              })
+              .catch(err => {
+                console.error('Error fetching user:', err);
+                localStorage.removeItem('token');
+              })
+              .finally(() => setLoading(prev => ({ ...prev, auth: false })));
+            fetchPosts();
+            fetchNotifications();
+          }
+        } catch (err) {
+          console.error('useEffect error:', err);
+        }
+        return () => {
+          stopCamera();
+        };
+      }, []);
+
+      const fetchPosts = () => {
+        const token = localStorage.getItem('token');
+        axiosInstance.get(`${API_URL}/api/posts?page=${page}&limit=10`, { headers: { Authorization: `Bearer ${token}` } })
+          .then(res => {
+            setPosts(prev => page === 1 ? res.data : [...prev, ...res.data]);
+            setHasMorePosts(res.data.length === 10);
+          })
+          .catch(err => console.error('Error fetching posts:', err));
+      };
+
+      const fetchNotifications = () => {
+        const token = localStorage.getItem('token');
+        axiosInstance.get(`${API_URL}/api/notifications`, { headers: { Authorization: `Bearer ${token}` } })
+          .then(res => setNotifications(res.data))
+          .catch(err => console.error('Error fetching notifications:', err));
+      };
+
+      const handleDismissNotification = (notificationId) => {
+        const token = localStorage.getItem('token');
+        axiosInstance.delete(`${API_URL}/api/notifications/${notificationId}`, { headers: { Authorization: `Bearer ${token}` } })
+          .then(() => {
+            setNotifications(prev => prev.filter(n => n._id !== notificationId));
+          })
+          .catch(err => console.error('Error dismissing notification:', err));
+      };
+
+      const handleClearAllNotifications = () => {
+        const token = localStorage.getItem('token');
+        axiosInstance.delete(`${API_URL}/api/notifications`, { headers: { Authorization: `Bearer ${token}` } })
+          .then(() => setNotifications([]))
+          .catch(err => console.error('Error clearing notifications:', err));
+      };
+
+      const handleAuth = () => {
+        if (!auth.email.match(/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/)) {
+          alert('Please enter a valid email');
+          return;
+        }
+        if (!auth.isLogin && !auth.password.match(/^(?=.*[0-9])(?=.*[!@#$%^&*])[a-zA-Z0-9!@#$%^&*]{8,}$/)) {
+          alert('Password must be at least 8 characters with a number and special character');
+          return;
+        }
+        setLoading(prev => ({ ...prev, auth: true }));
+        const url = auth.isLogin ? `${API_URL}/api/users/login` : `${API_URL}/api/users/signup`;
+        axiosInstance.post(url, { email: auth.email, password: auth.password })
+          .then(res => {
+            localStorage.setItem('token', res.data.token);
+            setUser(res.data.user);
+            setProfile({ bio: res.data.user.bio || '', avatar: res.data.user.avatar || '' });
+            fetchPosts();
+            fetchNotifications();
+            setAuth({ email: '', password: '', isLogin: true });
+          })
+          .catch(err => alert('Auth failed: ' + (err.message || 'Unknown error')))
+          .finally(() => setLoading(prev => ({ ...prev, auth: false }));
+      };
+
+      const handleProfileUpdate = () => {
+        const token = localStorage.getItem('token');
+        const formData = new FormData();
+        formData.append('bio', profile.bio);
+        if (avatarFile) {
+          if (avatarFile.size > 5 * 1024 * 1024) {
+            setProfileMessage('Avatar file size must be less than 5MB');
+            return;
+          }
+          formData.append('avatar', avatarFile);
+        }
+        setLoading(prev => ({ ...prev, profile: true }));
+        axiosInstance.put(`${API_URL}/api/users/profile`, formData, {
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' }
+        })
+          .then(res => {
+            setProfile({ ...profile, avatar: res.data.avatar });
+            setAvatarFile(null);
+            setProfileMessage('Profile updated successfully');
+            setTimeout(() => setProfileMessage(''), 3000);
+          })
+          .catch(err => {
+            setProfileMessage('Error: ' + (err.message || 'Failed to update profile'));
+            setTimeout(() => setProfileMessage(''), 3000);
+          })
+          .finally(() => setLoading(prev => ({ ...prev, profile: false }));
+      };
+
+      const handleCreatePost = (isDraft = false) => {
+        if (!newPost.content || (!isDraft && (!newPost.prize || !newPost.likeNumber || isNaN(newPost.likeNumber) || newPost.likeNumber <= 0))) {
+          alert('Please fill all required fields with valid data');
+          return;
+        }
+        if (!window.confirm(`Are you sure you want to ${isDraft ? 'save as draft' : 'post'}?`)) return;
+        const token = localStorage.getItem('token');
+        const formData = new FormData();
+        formData.append('content', newPost.content);
+        formData.append('prize', newPost.prize);
+        formData.append('goldenLikeNumber', parseInt(newPost.likeNumber));
+        formData.append('isReel', newPost.isReel);
+        formData.append('isDraft', isDraft);
+        formData.append('hashtags', newPost.hashtags);
+        if (newPost.image) formData.append('media', newPost.image);
+        if (newPost.video) formData.append('media', newPost.video);
+        setLoading(prev => ({ ...prev, post: true }));
+        axiosInstance.post(`${API_URL}/api/posts`, formData, {
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' }
+        })
+          .then(() => {
+            setPage(1);
+            fetchPosts();
+            setNewPost({ content: '', image: null, video: null, prize: '', likeNumber: '', isReel: false, hashtags: '' });
+            setPreviewMedia(null);
+            stopCamera();
+          })
+          .catch(err => alert('Error creating post: ' + (err.message || 'Unknown error')))
+          .finally(() => setLoading(prev => ({ ...prev, post: false }));
+      };
+
+      const handleDeletePost = (postId) => {
+        if (!window.confirm('Are you sure you want to delete this post?')) return;
+        const token = localStorage.getItem('token');
+        setLoading(prev => ({ ...prev, delete: { ...prev.delete, [postId]: true } }));
+        axiosInstance.delete(`${API_URL}/api/posts/${postId}`, { headers: { Authorization: `Bearer ${token}` } })
+          .then(() => {
+            setPosts(prev => prev.filter(post => post._id !== postId));
+          })
+          .catch(err => alert('Error deleting post: ' + (err.message || 'Unknown error')))
+          .finally(() => setLoading(prev => ({ ...prev, delete: { ...prev.delete, [postId]: false } }));
+      };
+
+      const handleLike = (postId) => {
+        setLoading(prev => ({ ...prev, like: { ...prev.like, [postId]: true } }));
+        setPosts(prev => prev.map(post => post._id === postId ? { ...post, likes: post.likes + 1 } : post));
+        const token = localStorage.getItem('token');
+        axiosInstance.post(`${API_URL}/api/posts/${postId}/like`, {}, { headers: { Authorization: `Bearer ${token}` } })
+          .then(res => {
+            if (res.data.winner) setWinnerPrize(res.data.prize);
+            fetchPosts();
+          })
+          .catch(err => {
+            alert('Error: ' + (err.message || 'Unknown error'));
+            fetchPosts();
+          })
+          .finally(() => setLoading(prev => ({ ...prev, like: { ...prev.like, [postId]: false } }));
+      };
+
+      const handleComment = (postId) => {
+        const token = localStorage.getItem('token');
+        const commentText = newComment[postId] || '';
+        if (!commentText) {
+          alert('Comment cannot be empty');
+          return;
+        }
+        setLoading(prev => ({ ...prev, comment: { ...prev.comment, [postId]: true } }));
+        axiosInstance.post(`${API_URL}/api/posts/${postId}/comment`, { text: commentText }, { headers: { Authorization: `Bearer ${token}` } })
+          .then(() => {
+            setNewComment(prev => ({ ...prev, [postId]: '' }));
+            fetchPosts();
+          })
+          .catch(err => alert('Error commenting: ' + (err.message || 'Unknown error')))
+          .finally(() => setLoading(prev => ({ ...prev, comment: { ...prev.comment, [postId]: false } }));
+      };
+
+      const startCamera = async () => {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: cameraFacingMode, width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 } },
+            audio: isRecordingVideo
+          });
+          setCameraStream(stream);
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+          }
+          setIsCameraOpen(true);
+          setCameraError('');
+        } catch (err) {
+          setCameraError('Error accessing camera: ' + err.message);
+        }
+      };
+
+      const stopCamera = () => {
+        if (cameraStream) {
+          cameraStream.getTracks().forEach(track => track.stop());
+          setCameraStream(null);
+          setIsCameraOpen(false);
+          setIsRecordingVideo(false);
+        }
+      };
+
+      const capturePhoto = () => {
+        if (!videoRef.current || !cameraStream) return;
+        const canvas = document.createElement('canvas');
+        canvas.width = videoRef.current.videoWidth;
+        canvas.height = videoRef.current.videoHeight;
+        canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
+        canvas.toBlob(blob => {
+          if (blob.size > 5 * 1024 * 1024) {
+            alert('Captured photo must be less than 5MB');
+            return;
+          }
+          const file = new File([blob], 'photo.jpg', { type: 'image/jpeg' });
+          setNewPost({ ...newPost, image: file, video: null });
+          setPreviewMedia(URL.createObjectURL(file));
+          stopCamera();
+        }, 'image/jpeg', 0.8);
+      };
+
+      const startVideoRecording = () => {
+        if (!cameraStream) return;
+        const chunks = [];
+        const videoRecorder = new MediaRecorder(cameraStream);
+        videoRecorder.ondataavailable = e => chunks.push(e.data);
+        videoRecorder.onstop = () => {
+          const blob = new Blob(chunks, { type: 'video/mp4' });
+          if (blob.size > 50 * 1024 * 1024) {
+            alert('Recorded video must be less than 50MB');
+            return;
+          }
+          const file = new File([blob], 'video.mp4', { type: 'video/mp4' });
+          setNewPost({ ...newPost, video: file, image: null });
+          setPreviewMedia(URL.createObjectURL(file));
+          stopCamera();
+        };
+        videoRecorder.start();
+        videoRecorderRef.current = videoRecorder;
+        setIsRecordingVideo(true);
+      };
+
+      const stopVideoRecording = () => {
+        if (videoRecorderRef.current) {
+          videoRecorderRef.current.stop();
+          setIsRecordingVideo(false);
+        }
+      };
+
+      return React.createElement(HashRouter, null, // Changed to HashRouter
+        React.createElement(ErrorBoundary, null,
+          React.createElement(Routes, null,
+            React.createElement(Route, { path: '/', element: 
+              user ? React.createElement('div', { className: 'max-w-4xl mx-auto p-4' },
+                React.createElement('h1', { className: 'text-3xl font-bold mb-4' }, 'GoldLike Social'),
+                React.createElement('div', { className: 'mb-4' },
+                  React.createElement('h2', { className: 'text-xl font-semibold mb-2' }, 'Create Post'),
+                  React.createElement('textarea', {
+                    placeholder: "What's on your mind?",
+                    value: newPost.content,
+                    onChange: (e) => setNewPost({ ...newPost, content: e.target.value }),
+                    className: 'w-full p-2 border rounded mb-2',
+                    'aria-label': 'Post content'
+                  }),
+                  React.createElement('input', {
+                    type: 'text',
+                    placeholder: 'Prize (e.g., $10)',
+                    value: newPost.prize,
+                    onChange: (e) => setNewPost({ ...newPost, prize: e.target.value }),
+                    className: 'w-full p-2 border rounded mb-2',
+                    'aria-label': 'Post prize'
+                  }),
+                  React.createElement('input', {
+                    type: 'number',
+                    placeholder: 'Golden Like Number',
+                    value: newPost.likeNumber,
+                    onChange: (e) => setNewPost({ ...newPost, likeNumber: e.target.value }),
+                    className: 'w-full p-2 border rounded mb-2',
+                    'aria-label': 'Golden like number'
+                  }),
+                  React.createElement('input', {
+                    type: 'text',
+                    placeholder: 'Hashtags (e.g., #fun #social)',
+                    value: newPost.hashtags,
+                    onChange: (e) => setNewPost({ ...newPost, hashtags: e.target.value }),
+                    className: 'w-full p-2 border rounded mb-2',
+                    'aria-label': 'Hashtags'
+                  }),
+                  React.createElement('div', { className: 'flex gap-2 mb-2' },
+                    React.createElement('button', {
+                      onClick: startCamera,
+                      className: 'bg-blue-500 text-white p-2 rounded hover:bg-blue-600',
+                      'aria-label': 'Open camera'
+                    }, 'Open Camera'),
+                    React.createElement('button', {
+                      onClick: () => setCameraFacingMode(cameraFacingMode === 'user' ? 'environment' : 'user'),
+                      className: 'bg-gray-500 text-white p-2 rounded hover:bg-gray-600',
+                      'aria-label': 'Switch camera'
+                    }, 'Switch Camera'),
+                    isCameraOpen && React.createElement(React.Fragment, null,
+                      React.createElement('button', {
+                        onClick: capturePhoto,
+                        className: 'bg-green-500 text-white p-2 rounded hover:bg-green-600',
+                        'aria-label': 'Capture photo'
+                      }, 'Capture Photo'),
+                      React.createElement('button', {
+                        onClick: isRecordingVideo ? stopVideoRecording : startVideoRecording,
+                        className: 'bg-red-500 text-white p-2 rounded hover:bg-red-600',
+                        'aria-label': isRecordingVideo ? "Stop video" : "Record video"
+                      }, isRecordingVideo ? 'Stop Video' : 'Record Video')
+                    )
+                  ),
+                  cameraError && React.createElement('p', { className: 'text-red-500' }, cameraError),
+                  isCameraOpen && React.createElement('video', {
+                    ref: videoRef,
+                    autoPlay: true,
+                    playsInline: true,
+                    className: 'w-full h-64 mb-2 rounded'
+                  }),
+                  previewMedia && React.createElement('div', { className: 'mb-2' },
+                    newPost.image ? React.createElement('img', { src: previewMedia, alt: 'Preview', className: 'w-full h-64 object-cover rounded' }) :
+                    React.createElement('video', { src: previewMedia, controls: true, className: 'w-full h-64 rounded' })
+                  ),
+                  React.createElement('button', {
+                    onClick: () => handleCreatePost(),
+                    className: 'bg-blue-500 text-white p-2 rounded hover:bg-blue-600',
+                    disabled: loading.post,
+                    'aria-label': 'Create post'
+                  }, loading.post ? 'Posting...' : 'Post')
+                ),
+                React.createElement('div', null,
+                  React.createElement('h2', { className: 'text-xl font-semibold mb-2' }, 'Posts'),
+                  posts.map(post => React.createElement('div', { key: post._id, className: 'p-4 bg-gray-100 rounded shadow mb-2' },
+                    React.createElement('p', null, post.content),
+                    React.createElement('p', { className: 'text-sm text-gray-500' }, 'By ', post.username),
+                    React.createElement('div', { className: 'flex gap-2 mt-2' },
+                      React.createElement('button', {
+                        onClick: () => handleLike(post._id),
+                        className: 'text-blue-500 hover:underline',
+                        disabled: loading.like[post._id],
+                        'aria-label': `Like post ${post._id}`
+                      }, 'Like (', post.likes, ')'),
+                      post.userId === user?._id && React.createElement('button', {
+                        onClick: () => handleDeletePost(post._id),
+                        className: 'text-red-500 hover:underline',
+                        disabled: loading.delete[post._id],
+                        'aria-label': `Delete post ${post._id}`
+                      }, 'Delete')
+                    ),
+                    React.createElement('div', { className: 'mt-2' },
+                      React.createElement('input', {
+                        type: 'text',
+                        placeholder: 'Add a comment',
+                        value: newComment[post._id] || '',
+                        onChange: (e) => setNewComment({ ...newComment, [post._id]: e.target.value }),
+                        className: 'w-full p-2 border rounded mb-2',
+                        'aria-label': `Comment on post ${post._id}`
+                      }),
+                      React.createElement('button', {
+                        onClick: () => handleComment(post._id),
+                        className: 'bg-blue-500 text-white p-2 rounded hover:bg-blue-600',
+                        disabled: loading.comment[post._id],
+                        'aria-label': `Submit comment on post ${post._id}`
+                      }, 'Comment')
+                    )
+                  ))
+                ),
+                React.createElement('div', { className: 'mt-4' },
+                  React.createElement('h2', { className: 'text-xl font-semibold mb-2' }, 'Profile'),
+                  React.createElement('textarea', {
+                    placeholder: 'Bio',
+                    value: profile.bio,
+                    onChange: (e) => setProfile({ ...profile, bio: e.target.value }),
+                    className: 'w-full p-2 border rounded mb-2',
+                    'aria-label': 'Profile bio'
+                  }),
+                  React.createElement('input', {
+                    type: 'file',
+                    accept: 'image/*',
+                    onChange: (e) => setAvatarFile(e.target.files[0]),
+                    className: 'mb-2',
+                    'aria-label': 'Upload avatar'
+                  }),
+                  React.createElement('button', {
+                    onClick: handleProfileUpdate,
+                    className: 'bg-blue-500 text-white p-2 rounded hover:bg-blue-600',
+                    disabled: loading.profile,
+                    'aria-label': 'Update profile'
+                  }, loading.profile ? 'Updating...' : 'Update Profile'),
+                  profileMessage && React.createElement('p', { className: 'mt-2 text-sm text-green-500' }, profileMessage)
+                ),
+                React.createElement('button', {
+                  onClick: () => {
+                    localStorage.removeItem('token');
+                    setUser(null);
+                  },
+                  className: 'mt-4 bg-red-500 text-white p-2 rounded hover:bg-red-600',
+                  'aria-label': 'Logout'
+                }, 'Logout')
+              ) : React.createElement('div', { className: 'max-w-md mx-auto p-4' },
+                React.createElement('h1', { className: 'text-2xl font-bold mb-4' }, auth.isLogin ? 'Login' : 'Sign Up'),
+                React.createElement('input', {
+                  type: 'email',
+                  placeholder: 'Email',
+                  value: auth.email,
+                  onChange: (e) => setAuth({ ...auth, email: e.target.value }),
+                  className: 'w-full p-2 mb-2 border rounded',
+                  'aria-label': 'Email'
+                }),
+                React.createElement('input', {
+                  type: 'password',
+                  placeholder: 'Password',
+                  value: auth.password,
+                  onChange: (e) => setAuth({ ...auth, password: e.target.value }),
+                  className: 'w-full p-2 mb-2 border rounded',
+                  'aria-label': 'Password'
+                }),
+                React.createElement('button', {
+                  onClick: handleAuth,
+                  className: 'bg-blue-500 text-white p-2 rounded hover:bg-blue-600 w-full',
+                  disabled: loading.auth,
+                  'aria-label': auth.isLogin ? 'Login' : 'Sign Up'
+                }, loading.auth ? 'Loading...' : (auth.isLogin ? 'Login' : 'Sign Up')),
+                React.createElement('button', {
+                  onClick: () => setAuth({ ...auth, isLogin: !auth.isLogin }),
+                  className: 'mt-2 text-blue-500 hover:underline',
+                  'aria-label': auth.isLogin ? 'Switch to Sign Up' : 'Switch to Login'
+                }, auth.isLogin ? 'Need an account? Sign Up' : 'Have an account? Login'),
+                React.createElement('button', {
+                  onClick: () => setShowResetRequest(true),
+                  className: 'mt-2 text-blue-500 hover:underline',
+                  'aria-label': 'Forgot Password'
+                }, 'Forgot Password?'),
+                showResetRequest && React.createElement(ResetPasswordRequest, { onBackToLogin: () => setShowResetRequest(false) })
+              ) 
+            }),
+            React.createElement(Route, { path: '/reset-password/:token', element: React.createElement(ResetPassword, null) })
+          ),
+          user && React.createElement(Notifications, {
+            notifications: notifications,
+            onDismiss: handleDismissNotification,
+            onClearAll: handleClearAllNotifications
+          }),
+          winnerPrize && React.createElement(WinnerOverlay, { prize: winnerPrize, onClose: () => setWinnerPrize(null) })
+        )
+      );
+    };
+
+    try {
+      ReactDOM.render(React.createElement(App, null), document.getElementById('root'));
+    } catch (err) {
+      console.error('ReactDOM.render error:', err);
+    }
+  </script>
+</body>
+</html>
